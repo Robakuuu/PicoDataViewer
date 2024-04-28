@@ -1,0 +1,154 @@
+﻿@page "/counter"
+@using Type = PicoDataViewer.Web.App.Type
+@using System.Collections.ObjectModel
+@using OxyPlot.Annotations;
+@using OxyPlot.Axes;
+@using OxyPlot.Series;
+@using OxyPlot;
+@inject PicoViewModel _model
+@inject IWebHostEnvironment _env
+
+<PageTitle>PicoViewer</PageTitle>
+
+
+
+
+<MudContainer>
+    <MudStack>
+        <div style="width:1920px; height:1080px">
+            <svg style="width:100%; height:100%">@((MarkupString)PlotInSVG)</svg>
+        </div>
+
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OnGeneratePlot"> Generate plot</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OnSimulateData"> Simulate data</MudButton>
+        <MudInputString Label="COM" @bind-Text="_model.COM"></MudInputString>
+        
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OnConnectPico"> Connect Pico</MudButton>
+
+        <MudExpansionPanels MultiExpansion="true">
+            <MudExpansionPanel Text="Data recieved from Pico">
+                <MudText>Console: @CurrentData</MudText>
+            </MudExpansionPanel>
+            <MudExpansionPanel Text="Parameters" Disabled="@(!_model.PortOpened)">
+                <MudStack>
+                    <MudText>Pico working type:</MudText>
+                    <MudRadioGroup @bind-Value="@_model.WorkingType">
+                        <MudRadio Value="@Type.None" Color="Color.Primary">None</MudRadio>
+                        <MudRadio Value="@Type.Interval" Color="Color.Secondary">Interval</MudRadio>
+                        <MudRadio Value="@Type.Rising">Rising</MudRadio>
+                        <MudRadio Value="@Type.Falling" Color="Color.Primary">Falling</MudRadio>
+                    </MudRadioGroup>
+                    <MudNumericField @bind-Value="_model.TriggerDelay" Label="Trigger delay in uS" Variant="Variant.Text" Min="0"/>
+                    <MudNumericField @bind-Value="_model.ShutterTime" Label="Shutter time in uS" Variant="Variant.Text" Min="1"/>
+                    <MudNumericField @bind-Value="_model.AutoDelay" Label="Auto delay in uS" Variant="Variant.Text" Min="0"/>
+                    <MudNumericField @bind-Value="_model.AdcPoint" Label="AdcPoint" Variant="Variant.Text" Min="0"/>
+                    <MudNumericField @bind-Value="_model.AdcHist" Label="AdcHist" Variant="Variant.Text" Min="0"/>
+
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OnSendParams"> Send params</MudButton>
+
+                </MudStack>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    </MudStack>
+
+</MudContainer>
+
+@code {
+
+   
+
+    private double _currentTime = 0;
+
+    private List<double> _adcBursts;
+    private List<double> _samplesInDouble;
+
+    public string CurrentData { get; set; }
+    public string PlotInSVG { get; set; }
+
+    protected override void OnInitialized()
+    {
+        _model.COM = "COM3";
+        _model.OnDataReceived+= OnDataReceived;
+        _model.OnReportAdded+= AddData;
+   
+        _adcBursts = new List<double>();
+        _samplesInDouble = new List<double>();
+
+    }
+
+    private void AddData(Object source, Report e)
+    {
+        if (!int.TryParse(e.SampleValue, out var samples))
+            return;
+        if (!double.TryParse(e.RaportAdcBurst, out var adcBurst))
+            return;
+
+        UpdateDataPoints(samples, adcBurst);
+    }
+  
+
+    public async Task OnGeneratePlot()
+    {
+        try
+        {
+            var samples = _samplesInDouble.ToArray();
+            var adcBursts = _adcBursts.ToArray();
+            var model = new PlotModel { Title = "AdcBurst in time" };
+            var lineSeries = new LineSeries() { MarkerType = MarkerType.Circle };
+            model.Axes.Add(new LinearAxis(){Position = AxisPosition.Left, Title = "Test", Minimum = 0, Maximum = 10});
+            model.Axes.Add(new LinearAxis() { Position = AxisPosition.Bottom, Title = "TestBottom", Minimum = _currentTime-10, Maximum = _currentTime });
+            for (int index = 0; index < samples.Length; index++)
+            {
+                lineSeries.Points.Add(new DataPoint(samples[index], adcBursts[index]));
+            }
+           
+            model.Series.Add(lineSeries);
+        
+
+            var exporter = new SvgExporter { Width = 1920, Height = 1080 };
+            PlotInSVG= exporter.ExportToString(model);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+         
+        }
+        InvokeAsync(StateHasChanged);
+    }
+    private void UpdateDataPoints(int samples, double adcBurst)
+    {
+        _currentTime += samples * 0.2;
+        _samplesInDouble.Add(_currentTime);
+        _adcBursts.Add(adcBurst);
+       OnGeneratePlot();
+    }
+
+
+ 
+
+    private void OnDataReceived(object? sender, DataFromPico e)
+    {
+        CurrentData += e.Data;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnSimulateData()
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            UpdateDataPoints(10, i);
+            await Task.Delay(1000);
+        }
+     
+    }
+    private async Task OnConnectPico()
+    {
+        await _model.ConnectToPico();
+    }
+
+    private async Task OnSendParams()
+    {
+        await _model.SendParams();
+    }
+
+}
